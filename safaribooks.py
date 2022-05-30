@@ -367,6 +367,7 @@ class SafariBooks:
         self.display.set_output_dir(self.BOOK_PATH)
         self.css_path = ""
         self.images_path = ""
+        self.videos_path = ""
         self.create_dirs()
 
         self.chapter_title = ""
@@ -374,6 +375,7 @@ class SafariBooks:
         self.chapter_stylesheets = []
         self.css = []
         self.images = []
+        self.videos = []
 
         self.display.info("Downloading book contents... (%s chapters)" % len(self.book_chapters), state=True)
         self.BASE_HTML = self.BASE_01_HTML + (self.KINDLE_HTML if not args.kindle else "") + self.BASE_02_HTML
@@ -400,6 +402,10 @@ class SafariBooks:
         self.images_done_queue = Queue(0) if "win" not in sys.platform else WinQueue()
         self.display.info("Downloading book images... (%s files)" % len(self.images), state=True)
         self.collect_images()
+
+        self.videos_done_queue = Queue(0) if "win" not in sys.platform else WinQueue()
+        self.display.info("Downloading book videos... (%s files)" % len(self.videos), state=True)
+        self.collect_videos()
 
         self.display.info("Creating EPUB file...", state=True)
         self.create_epub()
@@ -552,7 +558,10 @@ class SafariBooks:
         if response == 0:
             self.display.exit("API: unable to retrieve book chapters.")
 
+        self.display.log('[*] Parsing chapters...')
+        self.display.log(response.text)
         response = response.json()
+        self.display.log(response)
 
         if not isinstance(response, dict) or len(response.keys()) == 1:
             self.display.exit(self.display.api_error(response))
@@ -611,7 +620,7 @@ class SafariBooks:
 
     @staticmethod
     def is_image_link(url: str):
-        return pathlib.Path(url).suffix[1:].lower() in ["jpg", "jpeg", "png", "gif"]
+        return pathlib.Path(url).suffix[1:].lower() in ["jpg", "jpeg", "png", "gif", "mp4"]
 
     def link_replace(self, link):
         if link and not link.startswith("mailto"):
@@ -716,6 +725,19 @@ class SafariBooks:
                     new_img.attrib.update({"src": svg_url})
                     svg_root.remove(img.getparent())
                     svg_root.append(new_img)
+        # video tags
+        video_tags = root.xpath("//source")
+        if len(video_tags):
+            for video in video_tags:
+                video_attr_src = [x for x in video.attrib.keys() if "src" in x]
+                if len(video_attr_src):
+                    video_src = video.attrib.get(video_attr_src[0])
+                    self.videos.append(video_src)
+                    video_root = video.getparent()
+                    new_video = video_root.makeelement("source")
+                    new_video.attrib.update({"src": video_src})
+                    video_root.remove(video)
+                    video_root.append(new_video)
 
         book_content = book_content[0]
         book_content.rewrite_links(self.link_replace)
@@ -786,6 +808,7 @@ class SafariBooks:
             self.display.css_ad_info.value = 1
 
         self.images_path = os.path.join(oebps, "Images")
+        self.videos_path = os.path.join(oebps, "Images")
         if os.path.isdir(self.images_path):
             self.display.log("Images directory already exists: %s" % self.images_path)
 
@@ -809,6 +832,7 @@ class SafariBooks:
             first_page = len_books == len(self.chapters_queue)
 
             next_chapter = self.chapters_queue.pop(0)
+            self.display.info(next_chapter)
             self.chapter_title = next_chapter["title"]
             self.filename = next_chapter["filename"]
 
@@ -931,9 +955,23 @@ class SafariBooks:
         for image_url in self.images:
             self._thread_download_images(image_url)
 
+    def collect_videos(self):
+        if self.display.book_ad_info == 2:
+            self.display.info("Some of the book contents were already downloaded.\n"
+                              "    If you want to be sure that all the videos will be downloaded,\n"
+                              "    please delete the output directory '" + self.BOOK_PATH +
+                              "' and restart the program.")
+
+        self.display.state_status.value = -1
+
+        # "self._start_multiprocessing" seems to cause problem. Switching to mono-thread download.
+        for video_url in self.videos:
+            self._thread_download_images(video_url)
+
     def create_content_opf(self):
         self.css = next(os.walk(self.css_path))[2]
         self.images = next(os.walk(self.images_path))[2]
+        self.videos = next(os.walk(self.videos_path))[2]
 
         manifest = []
         spine = []
