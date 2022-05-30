@@ -922,6 +922,31 @@ class SafariBooks:
         self.images_done_queue.put(1)
         self.display.state(len(self.images), self.images_done_queue.qsize())
 
+    def _thread_download_videos(self, url):
+        video_name = url.split("/")[-1]
+        video_path = os.path.join(self.videos_path, video_name)
+        if os.path.isfile(video_path):
+            if not self.display.images_ad_info.value and url not in self.videos[:self.video.index(url)]:
+                self.display.info(("File `%s` already exists.\n"
+                                   "    If you want to download again all the videos,\n"
+                                   "    please delete the output directory '" + self.BOOK_PATH + "'"
+                                   " and restart the program.") %
+                                  video_name)
+                self.display.images_ad_info.value = 1
+
+        else:
+            response = self.requests_provider(urljoin(SAFARI_BASE_URL, url), stream=True)
+            if response == 0:
+                self.display.error("Error trying to retrieve this image: %s\n    From: %s" % (video_name, url))
+                return
+
+            with open(video_path, 'wb') as video:
+                for chunk in response.iter_content(1024):
+                    video.write(chunk)
+
+        self.videos_done_queue.put(1)
+        self.display.state(len(self.videos), self.videos_done_queue.qsize())
+
     def _start_multiprocessing(self, operation, full_queue):
         if len(full_queue) > 5:
             for i in range(0, len(full_queue), 5):
@@ -966,7 +991,7 @@ class SafariBooks:
 
         # "self._start_multiprocessing" seems to cause problem. Switching to mono-thread download.
         for video_url in self.videos:
-            self._thread_download_images(video_url)
+            self._thread_download_videos(video_url)
 
     def create_content_opf(self):
         self.css = next(os.walk(self.css_path))[2]
